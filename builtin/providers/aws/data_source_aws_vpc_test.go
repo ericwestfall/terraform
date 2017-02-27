@@ -20,10 +20,37 @@ func TestAccDataSourceAwsVpc_basic(t *testing.T) {
 					testAccDataSourceAwsVpcCheck("data.aws_vpc.by_cidr"),
 					testAccDataSourceAwsVpcCheck("data.aws_vpc.by_tag"),
 					testAccDataSourceAwsVpcCheck("data.aws_vpc.by_filter"),
+					testAccDataSourceAwsVpcCheckReservedTag("data.aws_vpc.by_reserved_tag"),
 				),
 			},
 		},
 	})
+}
+
+func testAccDataSourceAwsVpcCheckReservedTag(name string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[name]
+		if !ok {
+			return fmt.Errorf("root module has no resource called %s", name)
+		}
+
+		cf, ok := s.RootModule().Resources["aws_cloudformation_stack.cf-test"]
+		if !ok {
+			return fmt.Errorf("can't find aws_cloudformation_stack.cf-test")
+		}
+
+		attr := rs.Primary.Attributes
+
+		if attr["id"] != cf.Primary.Attributes["outputs.VpcId"] {
+			return fmt.Errorf(
+				"id is %s; want %s",
+				attr["id"],
+				cf.Primary.Attributes["outputs.VpcId"],
+			)
+		}
+
+		return nil
+	}
 }
 
 func testAccDataSourceAwsVpcCheck(name string) resource.TestCheckFunc {
@@ -72,6 +99,25 @@ resource "aws_vpc" "test" {
   }
 }
 
+resource "aws_cloudformation_stack" "cf-test" {
+  name = "TerraformAccCloudformationVpcDataSource"
+  template_body = <<STACK
+Resources:
+  TerraformAccCloudformationVpcCf:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+      - Key: Name
+        Value: TerraformAccCloudformationVpcCf
+Outputs:
+  VpcName:
+    Value: TerraformAccCloudformationVpcCf
+  VpcId:
+    Value: !Ref TerraformAccCloudformationVpcCf
+STACK
+}
+
 data "aws_vpc" "by_id" {
   id = "${aws_vpc.test.id}"
 }
@@ -83,6 +129,12 @@ data "aws_vpc" "by_cidr" {
 data "aws_vpc" "by_tag" {
   tags {
     Name = "${aws_vpc.test.tags["Name"]}"
+  }
+}
+
+data "aws_vpc" "by_reserved_tag" {
+  tags {
+    "aws:cloudformation:logical-id" = "${aws_cloudformation_stack.cf-test.outputs["VpcName"]}"
   }
 }
 

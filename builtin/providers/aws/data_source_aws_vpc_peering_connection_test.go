@@ -30,6 +30,48 @@ func TestAccDataSourceAwsVpcPeeringConnection_basic(t *testing.T) {
 	})
 }
 
+func TestAccDataSourceAwsVpcPeeringConnection_ReservedTags(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:  func() { testAccPreCheck(t) },
+		Providers: testAccProviders,
+		Steps: []resource.TestStep{
+			resource.TestStep{
+				Config: testAccDataSourceAwsVpcPeeringConnectionConfigReservedTags,
+				Check: resource.ComposeTestCheckFunc(
+					testAccDataSourceAwsVpcPeeringConnectionCheckReservedTag("data.aws_vpc_peering_connection.test_by_reserved_tag"),
+				),
+				ExpectNonEmptyPlan: false,
+			},
+		},
+	})
+}
+
+func testAccDataSourceAwsVpcPeeringConnectionCheckReservedTag(name string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[name]
+		if !ok {
+			return fmt.Errorf("root module has no resource called %s", name)
+		}
+
+		pcxCF, ok := s.RootModule().Resources["aws_cloudformation_stack.peering-test"]
+		if !ok {
+			return fmt.Errorf("can't find aws_cloudformation_stack.peering-test in state")
+		}
+
+		attr := rs.Primary.Attributes
+
+		if attr["tags.Name"] != pcxCF.Primary.Attributes["outputs.PeeringConnectionName"] {
+			return fmt.Errorf(
+				"name is %s; want %s",
+				attr["tags.Name"],
+				pcxCF.Primary.Attributes["outputs.PeeringConnectionName"],
+			)
+		}
+
+		return nil
+	}
+}
+
 func testAccDataSourceAwsVpcPeeringConnectionCheck(name string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[name]
@@ -55,6 +97,67 @@ func testAccDataSourceAwsVpcPeeringConnectionCheck(name string) resource.TestChe
 		return nil
 	}
 }
+
+const testAccDataSourceAwsVpcPeeringConnectionConfigReservedTags = `
+provider "aws" {
+  region = "us-west-2"
+}
+
+resource "aws_vpc" "foo" {
+  cidr_block = "10.1.0.0/16"
+
+  tags {
+	  Name = "terraform-testacc-vpc-peering-connection-data-source-foo"
+  }
+}
+
+resource "aws_vpc" "bar" {
+  cidr_block = "10.2.0.0/16"
+
+  tags {
+	  Name = "terraform-testacc-vpc-peering-connection-data-source-bar"
+  }
+}
+
+resource "aws_cloudformation_stack" "peering-test" {
+  name = "TerraformAccCloudformationVpcPeerConnectionDataSource"
+  parameters {
+    VpcId = "${aws_vpc.foo.id}"
+    PeerVpcId = "${aws_vpc.bar.id}"
+  }
+
+  template_body = <<STACK
+Parameters:
+  VpcId:
+    Type: String
+  PeerVpcId:
+    Type: String
+Resources:
+  TerraformAccCloudformationVpcPeerConnectionCf:
+    Type: "AWS::EC2::VPCPeeringConnection"
+    Properties:
+      VpcId:
+        Ref: VpcId
+      PeerVpcId:
+        Ref: PeerVpcId
+      Tags:
+        - Key: Name
+          Value: terraform-testacc-vpc-peering-connection-data-source-foo-to-bar
+Outputs:
+  PeeringConnectionName:
+    Value: terraform-testacc-vpc-peering-connection-data-source-foo-to-bar
+  LogicalId:
+    Value: TerraformAccCloudformationVpcPeerConnectionCf
+STACK
+}
+
+data "aws_vpc_peering_connection" "test_by_reserved_tag" {
+	status = "active"
+  tags {
+    "aws:cloudformation:logical-id" = "${aws_cloudformation_stack.peering-test.outputs["LogicalId"]}"
+  }
+}
+`
 
 const testAccDataSourceAwsVpcPeeringConnectionConfig = `
 provider "aws" {
